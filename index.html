@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>UnlockMe3</title>
+    <title>Enclosed Tunnel Maze</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
         canvas { display: block; }
@@ -355,6 +355,79 @@ scene.add(consoleScreen);
         if (e.code === 'KeyA') move.left = false;
         if (e.code === 'KeyD') move.right = false;
     });
+	 let touchStartX = 0;
+let touchStartY = 0;
+let touchMoveX = 0;
+let touchMoveY = 0;
+let touchActive = false;
+
+const swipeThreshold = 20; // minimum pixels to consider a swipe
+
+// Track touches
+renderer.domElement.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+        touchActive = true;
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchMoveX = touchStartX;
+        touchMoveY = touchStartY;
+    }
+}, false);
+
+renderer.domElement.addEventListener('touchmove', (e) => {
+    if (touchActive && e.touches.length === 1) {
+        const touch = e.touches[0];
+
+        // Look around by dragging finger horizontally
+        const deltaX = touch.clientX - touchMoveX;
+        camera.rotation.y -= deltaX * 0.005; // adjust sensitivity here
+
+        touchMoveX = touch.clientX;
+        touchMoveY = touch.clientY;
+
+        e.preventDefault(); // prevent scrolling
+    }
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchend', (e) => {
+    if (touchActive) {
+        const dx = touchMoveX - touchStartX;
+        const dy = touchMoveY - touchStartY;
+
+        // Detect swipe direction for movement only if enough movement
+        if (Math.abs(dx) > swipeThreshold || Math.abs(dy) > swipeThreshold) {
+            move.forward = false;
+            move.backward = false;
+            move.left = false;
+            move.right = false;
+
+            if (Math.abs(dy) > Math.abs(dx)) {
+                if (dy < 0) {
+                    move.forward = true;   // swipe up
+                } else {
+                    move.backward = true;  // swipe down
+                }
+            } else {
+                if (dx < 0) {
+                    move.left = true;      // swipe left
+                } else {
+                    move.right = true;     // swipe right
+                }
+            }
+
+            // Stop movement after short time (simulate tap & move)
+            setTimeout(() => {
+                move.forward = false;
+                move.backward = false;
+                move.left = false;
+                move.right = false;
+            }, 200); // move duration in ms
+        }
+
+        touchActive = false;
+    }
+});
+
 
     // --- Collision Detection Helpers ---
     // Axis-Aligned Bounding Box (AABB) intersection check
