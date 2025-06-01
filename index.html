@@ -7,10 +7,44 @@
         body { margin: 0; overflow: hidden; background: #000; }
         canvas { display: block; }
     </style>
+    <!-- Add this inside the <head> or before your script -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.8.6/nipplejs.min.js"></script>
+
 </head>
 <body>
 <script type="module">
     import * as THREE from './three.js-master/build/three.module.js';
+    <div id="joystick-container" style="position: fixed; bottom: 0; left: 0; width: 150px; height: 150px;"></div>
+<script>
+    const move = {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false
+    };
+
+    const joystick = nipplejs.create({
+        zone: document.getElementById('joystick-container'),
+        mode: 'static',
+        position: { left: '50px', bottom: '50px' },
+        color: 'white',
+        size: 80
+    });
+
+    joystick.on('move', (evt, data) => {
+        if (data && data.vector) {
+            move.forward = data.vector.y < -0.3;
+            move.backward = data.vector.y > 0.3;
+            move.left = data.vector.x < -0.3;
+            move.right = data.vector.x > 0.3;
+        }
+    });
+
+    joystick.on('end', () => {
+        move.forward = move.backward = move.left = move.right = false;
+    });
+</script>
+
 
     // --- Scene Setup ---
     const scene = new THREE.Scene();
