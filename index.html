@@ -7,25 +7,55 @@
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
         canvas { display: block; }
+        /* Style for mobile buttons */
+        .mobile-button {
+            width: 50px; 
+            height: 50px; 
+            font-size: 24px;
+            background-color: rgba(50, 50, 50, 0.7); /* Semi-transparent background */
+            color: white;
+            border: 1px solid rgba(200, 200, 200, 0.5);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0; /* Prevent shrinking */
+            -webkit-tap-highlight-color: transparent; /* Prevent tap highlight on mobile */
+        }
+        .mobile-button:active {
+            background-color: rgba(80, 80, 80, 0.9);
+        }
     </style>
 </head>
 <body>
-<div id="mobile-controls" style="
+<div id="mobile-controls-container" style="
     position: fixed; 
     bottom: 20px; 
     left: 50%; 
     transform: translateX(-50%);
-    width: 240px; 
-    height: 100px; 
-    display: flex; 
-    justify-content: space-between;
-    user-select: none; 
+    display: none; /* Hidden by default, shown by JS if mobile */
     z-index: 10;
+    gap: 10px; /* Space between buttons */
+    /* Add styling for the container when active on mobile */
+    background-color: rgba(0,0,0,0.4); 
+    padding: 10px; 
+    border-radius: 10px;
+    flex-direction: row; /* Keep buttons in a row */
+    justify-content: center; /* Center the buttons within the container */
+    width: fit-content; /* Make container fit content */
 ">
-  <button id="btn-left" style="width: 50px; height: 50px; font-size: 24px;">⬅️</button>
-  <button id="btn-forward" style="width: 50px; height: 50px; font-size: 24px;">⬆️</button>
-  <button id="btn-backward" style="width: 50px; height: 50px; font-size: 24px;">⬇️</button>
-  <button id="btn-right" style="width: 50px; height: 50px; font-size: 24px;">➡️</button>
+    <div id="mobile-movement-controls" style="
+        display: flex;
+        gap: 10px;
+        justify-content: center; /* Center buttons within this div */
+        align-items: center;
+    ">
+        <button id="btn-forward" class="mobile-button">⬆️</button>
+        <button id="btn-backward" class="mobile-button">⬇️</button>
+    </div>
+    <button id="btn-left" class="mobile-button" style="display: none;">⬅️</button>
+    <button id="btn-right" class="mobile-button" style="display: none;">➡️</button>
 </div>
 
 <script type="module">
@@ -343,127 +373,122 @@
     let prevMouse = { x: 0, y: 0 };
     const toRad = deg => deg * Math.PI / 180; // Helper to convert degrees to radians
 
-    // Mouse movement for looking around (desktop only)
-    document.addEventListener('mousedown', (e) => {
-        if (!isMobileDevice()) { // Only enable mouse drag on non-mobile
+    // Keyboard input and mouse look for desktop (only if not a mobile device)
+    const move = { forward: false, backward: false, left: false, right: false }; // Still tracks all directions for keyboard/desktop
+
+    if (!isMobileDevice()) {
+        document.addEventListener('mousedown', (e) => {
             isDragging = true;
             prevMouse.x = e.clientX;
             prevMouse.y = e.clientY;
-        }
-    });
-    document.addEventListener('mouseup', () => { isDragging = false; });
-    document.addEventListener('mousemove', e => {
-        if (isDragging) {
-            const deltaX = e.clientX - prevMouse.x;
-            camera.rotation.y -= toRad(deltaX * 0.3); // Rotate camera horizontally
-        }
-        prevMouse.x = e.clientX;
-        prevMouse.y = e.clientY;
-    });
+        });
+        document.addEventListener('mouseup', () => { isDragging = false; });
+        document.addEventListener('mousemove', e => {
+            if (isDragging) {
+                const deltaX = e.clientX - prevMouse.x;
+                camera.rotation.y -= toRad(deltaX * 0.3); // Rotate camera horizontally
+            }
+            prevMouse.x = e.clientX;
+            prevMouse.y = e.clientY;
+        });
 
-    // Keyboard input for movement (WASD) (desktop only)
-    const move = { forward: false, backward: false, left: false, right: false };
-    document.addEventListener('keydown', e => {
-        if (!isMobileDevice()) { // Only enable keyboard on non-mobile
+        document.addEventListener('keydown', e => {
             if (e.code === 'KeyW') move.forward = true;
             if (e.code === 'KeyS') move.backward = true;
             if (e.code === 'KeyA') move.left = true;
             if (e.code === 'KeyD') move.right = true;
-        }
-    });
-    document.addEventListener('keyup', e => {
-        if (!isMobileDevice()) { // Only enable keyboard on non-mobile
+        });
+        document.addEventListener('keyup', e => {
             if (e.code === 'KeyW') move.forward = false;
             if (e.code === 'KeyS') move.backward = false;
             if (e.code === 'KeyA') move.left = false;
             if (e.code === 'KeyD') move.right = false;
-        }
-    });
+        });
+    }
 
-    // Mobile controls (buttons and touch for look)
+    // Get references to buttons (even if hidden by CSS, JS might need them)
+    const mobileControlsContainer = document.getElementById('mobile-controls-container');
     const btnForward = document.getElementById('btn-forward');
     const btnBackward = document.getElementById('btn-backward');
-    const btnLeft = document.getElementById('btn-left');
-    const btnRight = document.getElementById('btn-right');
+    const btnLeft = document.getElementById('btn-left'); 
+    const btnRight = document.getElementById('btn-right'); 
 
     // A helper function to add touch event listeners to each button
     function addTouchListeners(button, moveKey) {
-        button.addEventListener('touchstart', (e) => {
-            e.preventDefault();       // Prevent scrolling when touching buttons
-            move[moveKey] = true;     // Start moving in that direction
-        });
-        button.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            move[moveKey] = false;    // Stop moving when touch ends
-        });
-        button.addEventListener('touchcancel', (e) => {
-            e.preventDefault();
-            move[moveKey] = false;    // Also stop if touch gets canceled
-        });
+        if (button) { // Ensure button exists before adding listeners
+            button.addEventListener('touchstart', (e) => {
+                e.preventDefault();       // Prevent scrolling/zooming
+                move[moveKey] = true;     // Start moving in that direction
+            });
+            button.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                move[moveKey] = false;    // Stop moving when touch ends
+            });
+            button.addEventListener('touchcancel', (e) => {
+                e.preventDefault();
+                move[moveKey] = false;    // Also stop if touch gets canceled
+            });
+        }
     }
 
-    // Add touch listeners to each button and link to the corresponding move key
-    addTouchListeners(btnForward, 'forward');
-    addTouchListeners(btnBackward, 'backward');
-    addTouchListeners(btnLeft, 'left');
-    addTouchListeners(btnRight, 'right');
+    // Only add touch listeners for the forward and backward buttons on mobile
+    if (isMobileDevice()) {
+        addTouchListeners(btnForward, 'forward');
+        addTouchListeners(btnBackward, 'backward');
 
-    // Touch movement for looking around (mobile only, outside of buttons)
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let isTouchingScreen = false;
+        // Touch movement for looking around (mobile only, outside of buttons)
+        let touchStartX = 0;
+        let isTouchingScreen = false;
+        let touchOriginIsButton = false; 
 
-    // Use a flag to avoid conflicts with button touches
-    let touchOriginIsButton = false; 
-
-    document.addEventListener('touchstart', (e) => {
-        if (isMobileDevice() && e.target.tagName !== 'BUTTON') { // Only for mobile, and not on a button
-            isTouchingScreen = true;
-            touchStartX = e.touches[0].clientX;
-            touchStartY = e.touches[0].clientY;
-            touchOriginIsButton = false;
-        } else if (e.target.tagName === 'BUTTON') {
-            touchOriginIsButton = true; // Mark if touch originated from a button
-        }
-    });
-
-    document.addEventListener('touchmove', (e) => {
-        if (isMobileDevice() && isTouchingScreen && !touchOriginIsButton) { // Only for mobile and if not on a button
-            const deltaX = e.touches[0].clientX - touchStartX;
-            // No vertical camera movement in this game, but you could add it here if needed
-            // const deltaY = e.touches[0].clientY - touchStartY; 
+        document.addEventListener('touchstart', (e) => {
+            // Check if the touch target is one of the mobile control buttons (visible or hidden)
+            // This prevents the camera from rotating when you tap a button
+            const isButtonTouch = e.target === btnForward || e.target === btnBackward || e.target === btnLeft || e.target === btnRight;
             
-            camera.rotation.y -= toRad(deltaX * 0.3); // Rotate camera horizontally
-            
-            touchStartX = e.touches[0].clientX;
-            // touchStartY = e.touches[0].clientY; 
-        }
-    });
+            if (!isButtonTouch) {
+                isTouchingScreen = true;
+                touchStartX = e.touches[0].clientX;
+                touchOriginIsButton = false; // Mark that touch did NOT originate on a button
+            } else {
+                touchOriginIsButton = true; // Mark that touch DID originate on a button
+            }
+        }, { passive: false }); // Use { passive: false } to allow preventDefault
 
-    document.addEventListener('touchend', (e) => {
-        if (isMobileDevice()) {
+        document.addEventListener('touchmove', (e) => {
+            if (isTouchingScreen && !touchOriginIsButton) { // Only rotate if not on a button and touch is active
+                e.preventDefault(); // Prevent scrolling while dragging for look
+                const deltaX = e.touches[0].clientX - touchStartX;
+                camera.rotation.y -= toRad(deltaX * 0.3); // Rotate camera horizontally
+                touchStartX = e.touches[0].clientX;
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchend', () => {
             isTouchingScreen = false;
             touchOriginIsButton = false; // Reset the flag
-        }
-    });
-    
-    document.addEventListener('touchcancel', (e) => {
-        if (isMobileDevice()) {
+        });
+        
+        document.addEventListener('touchcancel', () => {
             isTouchingScreen = false;
             touchOriginIsButton = false; // Reset the flag
-        }
-    });
+        });
+    }
 
     // Function to detect mobile devices
     function isMobileDevice() {
-        // More robust detection using window.matchMedia for finer control if needed,
-        // but userAgent is generally sufficient for basic mobile/desktop distinction.
         return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     }
 
-    // Hide controls if NOT mobile
-    if (!isMobileDevice()) {
-        document.getElementById('mobile-controls').style.display = 'none';
+    // Initialize mobile controls display based on device type
+    if (isMobileDevice()) {
+        mobileControlsContainer.style.display = 'flex'; // Show the container
+        // Explicitly hide left and right buttons on mobile
+        if (btnLeft) btnLeft.style.display = 'none';
+        if (btnRight) btnRight.style.display = 'none';
+        // The container's CSS is set to accommodate the two buttons centrally now
+    } else {
+        mobileControlsContainer.style.display = 'none'; // Hide the container on desktop
     }
 
 
@@ -504,6 +529,8 @@
         else direction.z = 0;
 
         // Set local X movement (strafe left/right)
+        // This 'move.left'/'move.right' will only be true if a keyboard 'A' or 'D' is pressed on desktop.
+        // Mobile buttons for these are now hidden and not handled.
         if (move.left) direction.x = -speed * 0.7; // Strafe slightly slower
         else if (move.right) direction.x = speed * 0.7;
         else direction.x = 0;
