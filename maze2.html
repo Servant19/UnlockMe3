@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Fantasy Oasis Utopia</title>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+
+        #door-text-container {
+            position: absolute;
+            color: white;
+            font-family: 'VT323', monospace;
+            font-size: 2em;
+            text-align: center;
+            z-index: 100;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            display: none; /* Hidden by default */
+            white-space: pre-wrap; /* Preserve line breaks */
+            pointer-events: none; /* Crucial: Allows clicks to pass through to the canvas */
+            transform: translate(-50%, -50%); /* For centering the text around the calculated screen position */
+        }
+
+        #terminal-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            display: none; /* Hidden by default */
+            justify-content: flex-start; /* Align content to the top */
+            align-items: flex-start; /* Align content to the left */
+            overflow: hidden;
+        }
+
+        #terminal-output {
+            font-family: 'VT323', monospace;
+            font-size: 2em;
+            color: #00ff00; /* Green text */
+            white-space: pre-wrap; /* Preserve whitespace and wrap text */
+            text-align: left;
+            padding: 20px;
+            box-sizing: border-box;
+            overflow: hidden;
+            line-height: 1.2;
+        }
+
+        .terminal-cursor {
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            from, to { visibility: hidden; }
+            50% { visibility: visible; }
+        }
+    </style>
+</head>
+<body>
+    <div id="door-text-container"></div>
+    <div id="terminal-container">
+        <pre id="terminal-output"></pre>
+    </div>
+
+    <script type="module">
+        import * as THREE from './three.js-master/build/three.module.js';
+
+        let camera, scene, renderer;
+        let yawObject;      // For horizontal rotation
+        let pitchObject;    // For vertical rotation
+        let isLocked = true; // Set to true by default since there's no click to enter
+
+        const move = { forward: false, backward: false, left: false, right: false };
+        const crystals = []; // Store crystals for animation
+
+        const playerEyeLevelOffset = 10;
+        const movementSpeed = 5; // Increased speed for keyboard movement (units per second)
+        const mouseSensitivity = 0.005;
+
+        let lastUpdateTime = performance.now();
+
+        // Time of day variables
+        let timeOfDay = 0.0; // 0.0 to 1.0 representing a full cycle. Start at 0.0 for Dawn.
+        const dayCycleDuration = 60; // 60 seconds for a full day-night cycle (1 minute)
+        let dayCyclesCompleted = 0; // Track completed day/night cycles
+        const requiredDayCycles = 1; // Number of cycles before door event
+
+        // Sky color keyframes (adjust these for desired visual effect)
+        const skyColors = {
+            dawn: new THREE.Color(0xffaa66), // Orange-pink for sunrise
+            morning: new THREE.Color(0x88ccff), // Light blue for day
+            noon: new THREE.Color(0xaaddff), // Even lighter blue for high noon
+            dusk: new THREE.Color(0xff6666), // Red-orange for sunset
+            night: new THREE.Color(0x0a0a20)  // Deep blue/black for night
+        };
+
+        // Sun light reference
+        let sun;
+        let stars; // To hold our starfield
+
+        // Red Door variables
+        let redDoor;
+        const doorPosition = new THREE.Vector3(50, 2.5, 0); // Fixed distance, adjust as needed
+        const doorInteractionDistance = 15; // Distance to activate interaction text
+        const doorPassThroughDistance = 15; // Distance to trigger passing through the door
+
+        // Game State management
+        const GAME_STATE = {
+            CRYSTALS_FALLING: 'crystals_falling',
+            DAY_NIGHT_CYCLE: 'day_night_cycle',
+            DOOR_APPEAR: 'door_appear' // State for when the door appears and is interactive
+        };
+        let currentGameState = GAME_STATE.CRYSTALS_FALLING; // Use currentGameState consistently
+
+        // --- Terminal Variables (Still present but not used for door transition directly) ---
+        let terminalOutputDiv;
+        let doorTextContainer;
+        let terminalText = "End?";
+        let charIndex = 0;
+        let typingSpeed = 100; // milliseconds per character
+        let typingInterval;
+        let cursorSpan;
+
+        // --- Physics Constants for Falling Crystals ---
+        const GRAVITY = 9.8 * 1.5;
+        const DAMPING_AIR = 0.995;
+        const INITIAL_FALL_HEIGHT = 400;
+        const INITIAL_FALL_HEIGHT_VARIATION = 100;
+        const RANDOM_HORIZONTAL_VELOCITY_RANGE = 8;
+        const RANDOM_ROTATION_SPEED_RANGE = Math.PI * 0.2;
+        // const LANDED_BOBBLE_AMPLITUDE = 1.0; // No longer needed for this bounce type
+
+        // NEW: Physics constants for bouncing
+        const BOUNCE_RESTITUTION = 0.63; // How much velocity is retained after a bounce (0 = no bounce, 1 = perfect bounce)
+        const MIN_BOUNCE_VELOCITY = 0.5; // Minimum vertical velocity for a bounce to occur (prevents infinite tiny bounces)
+
+
+        // NEW: Flag to prevent multiple redirects
+        let isTransitioning = false; 
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            // Start with dawn sky color
+            scene.background = new THREE.Color(skyColors.dawn);
+            scene.fog = new THREE.Fog(skyColors.dawn, 100, 700);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 2000);
+            camera.position.set(0, playerEyeLevelOffset, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            pitchObject = new THREE.Object3D();
+            pitchObject.add(camera);
+
+            yawObject = new THREE.Object3D();
+            yawObject.position.y = playerEyeLevelOffset;
+            yawObject.add(pitchObject);
+            scene.add(yawObject);
+
+            // Request pointer lock immediately on page load
+            document.body.requestPointerLock();
+
+            document.addEventListener('pointerlockchange', () => {
+                if (document.pointerLockElement === document.body) {
+                    console.log('Pointer Lock Enabled');
+                    isLocked = true;
+                } else {
+                    console.log('Pointer Lock Disabled');
+                    isLocked = false;
+                }
+            });
+
+            document.addEventListener('pointerlockerror', (event) => {
+                console.error('Pointer Lock Error:', event);
+            });
+
+            document.addEventListener('mousemove', (event) => {
+                if (isLocked) {
+                    const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                    const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+                    yawObject.rotation.y -= movementX * mouseSensitivity;
+                    pitchObject.rotation.x -= movementY * mouseSensitivity;
+                    pitchObject.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitchObject.rotation.x));
+                }
+            });
+
+            const ground = new THREE.Mesh(
+                new THREE.PlaneGeometry(1000, 1000),
+                new THREE.MeshStandardMaterial({ color: 0x33dd99 })
+            );
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            for (let i = 0; i < 1200; i++) {
+                const color = new THREE.Color().setHSL(Math.random(), 1, 0.5);
+                const crystal = new THREE.Mesh(
+                    new THREE.ConeGeometry(1, 5, 6),
+                    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6 })
+                );
+
+                const randomX = (Math.random() - 0.5) * 400;
+                const randomZ = (Math.random() - 0.5) * 400;
+                const initialY = INITIAL_FALL_HEIGHT + Math.random() * INITIAL_FALL_HEIGHT_VARIATION;
+
+                crystal.position.set(randomX, initialY, randomZ);
+                crystal.castShadow = true;
+                crystal.receiveShadow = true;
+                scene.add(crystal);
+
+                crystal.userData = {
+                    targetY: 2.5, // The Y position when landed (ground level)
+                    velocityY: (Math.random() - 0.5) * 5, // Initial random vertical velocity
+                    velocityXZ: new THREE.Vector3(
+                        (Math.random() - 0.5) * RANDOM_HORIZONTAL_VELOCITY_RANGE,
+                        0,
+                        (Math.random() - 0.5) * RANDOM_HORIZONTAL_VELOCITY_RANGE
+                    ),
+                    rotationSpeed: (Math.random() - 0.5) * RANDOM_ROTATION_SPEED_RANGE,
+                    isFalling: true, // True initially
+                    gravityMultiplier: 0.8 + Math.random() * 0.4,
+                    
+                    // New properties for realistic bouncing
+                    isBouncing: false, // Flag to indicate if it's currently bouncing (after initial fall)
+                    onGround: false,    // True if crystal is currently on the ground
+                    restitution: BOUNCE_RESTITUTION * (0.8 + Math.random() * 0.4), // Randomize restitution slightly
+                    minBounceVelocity: MIN_BOUNCE_VELOCITY // Prevents infinite small bounces
+                };
+                crystals.push(crystal);
+            }
+
+            sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(50, 200, 50);
+            sun.castShadow = true;
+            sun.shadow.mapSize.width = 2048;
+            sun.shadow.mapSize.height = 2048;
+            sun.shadow.camera.near = 0.5;
+            sun.shadow.camera.far = 1000;
+            sun.shadow.camera.left = -500;
+            sun.shadow.camera.right = 500;
+            sun.shadow.camera.top = 500;
+            sun.shadow.camera.bottom = -500;
+            scene.add(sun);
+
+            const ambient = new THREE.AmbientLight(0x99aaff, 0.2);
+            scene.add(ambient);
+
+            const hemiLight = new THREE.HemisphereLight(0xadd8e6, 0x000000, 0.6);
+            scene.add(hemiLight);
+
+            // Create Stars
+            const starGeometry = new THREE.BufferGeometry();
+            const starMaterial = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 1.5,
+                sizeAttenuation: true,
+                transparent: true,
+                opacity: 0 // Stars start hidden
+            });
+
+            const starVertices = [];
+            const starCount = 5000;
+            const starFieldRadius = 600;
+
+            for (let i = 0; i < starCount; i++) {
+                const x = (Math.random() - 0.5) * 2 * starFieldRadius;
+                const y = (Math.random() - 0.5) * 2 * starFieldRadius * 1.5;
+                const z = (Math.random() - 0.5) * 2 * starFieldRadius;
+
+                const distance = Math.sqrt(x * x + y * y + z * z);
+                if (distance > starFieldRadius * 0.2 && distance < starFieldRadius) {
+                    starVertices.push(x, y, z);
+                } else {
+                    i--;
+                }
+            }
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            stars = new THREE.Points(starGeometry, starMaterial);
+            scene.add(stars);
+
+            // --- Red Door ---
+            // Increased door size: Width (15), Height (25), Depth (1.5)
+            const doorGeometry = new THREE.BoxGeometry(15, 25, 1.5);
+            const doorMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red color
+            redDoor = new THREE.Mesh(doorGeometry, doorMaterial);
+            redDoor.position.copy(doorPosition);
+            redDoor.position.y += doorGeometry.parameters.height / 2; // Adjust y to sit on the ground
+            redDoor.castShadow = true;
+            redDoor.receiveShadow = true;
+            redDoor.visible = false; // Start hidden
+            scene.add(redDoor);
+
+            // Get the HTML door text container
+            doorTextContainer = document.getElementById('door-text-container');
+            terminalOutputDiv = document.getElementById('terminal-output');
+
+            document.addEventListener('keydown', (e) => {
+                if (isLocked) {
+                    switch (e.code) {
+                        case 'KeyW': move.forward = true; break;
+                        case 'KeyA': move.left = true; break;
+                        case 'KeyS': move.backward = true; break;
+                        case 'KeyD': move.right = true; break;
+                    }
+                }
+            });
+            document.addEventListener('keyup', (e) => {
+                if (isLocked) {
+                    switch (e.code) {
+                        case 'KeyW': move.forward = false; break;
+                        case 'KeyA': move.left = false; break;
+                        case 'KeyS': move.backward = false; break;
+                        case 'KeyD': move.right = false; break;
+                    }
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        // Standard easing function for smooth transitions
+        function easeInOutSine(t) {
+            return -0.5 * (Math.cos(Math.PI * t) - 1);
+        }
+
+        function getSkyColor(time) {
+            // Dawn: 0.0 to 0.15
+            if (time < 0.15) {
+                const progress = time / 0.15;
+                return skyColors.dawn.clone().lerp(skyColors.morning, progress);
+            }
+            // Morning to Noon: 0.15 to 0.35
+            else if (time < 0.35) {
+                const progress = (time - 0.15) / 0.20;
+                return skyColors.morning.clone().lerp(skyColors.noon, progress);
+            }
+            // Noon to Dusk: 0.35 to 0.65
+            else if (time < 0.65) {
+                const progress = (time - 0.35) / 0.30;
+                return skyColors.noon.clone().lerp(skyColors.dusk, progress);
+            }
+            // Dusk to Night: 0.65 to 0.85
+            else if (time < 0.85) {
+                const progress = (time - 0.65) / 0.20;
+                return skyColors.dusk.clone().lerp(skyColors.night, progress);
+            }
+            // Night: 0.85 to 1.0 (looping back to dawn)
+            else {
+                return skyColors.night; // Stay night until next cycle starts
+            }
+        }
+
+        function getSunColor(time) {
+            const sunColorDawn = new THREE.Color(0xffaa66);
+            const sunColorNoon = new THREE.Color(0xffffff);
+            const sunColorDusk = new THREE.Color(0xff6666);
+            const sunColorNight = new THREE.Color(0x330000); // Very dark red/brown for deep night
+
+            if (time < 0.2) {
+                const progress = time / 0.2;
+                return sunColorDawn.clone().lerp(sunColorNoon, progress);
+            } else if (time < 0.7) {
+                return sunColorNoon.clone();
+            } else if (time < 0.85) {
+                const progress = (time - 0.7) / 0.15;
+                return sunColorNoon.clone().lerp(sunColorDusk, progress);
+            } else {
+                // Smoothly transition from dusk to very dark night color
+                const progress = (time - 0.85) / 0.15;
+                return sunColorDusk.clone().lerp(sunColorNight, progress);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastUpdateTime) / 1000;
+            lastUpdateTime = currentTime;
+
+            if (isLocked) {
+                const actualMoveDistance = movementSpeed * deltaTime;
+
+                const forwardVector = new THREE.Vector3(0, 0, -1);
+                forwardVector.applyQuaternion(yawObject.quaternion);
+
+                const strafeVector = new THREE.Vector3(-1, 0, 0);
+                strafeVector.applyQuaternion(yawObject.quaternion);
+
+                if (move.forward) {
+                    yawObject.position.x += forwardVector.x * actualMoveDistance;
+                    yawObject.position.z += forwardVector.z * actualMoveDistance;
+                }
+                if (move.backward) {
+                    yawObject.position.x -= forwardVector.x * actualMoveDistance;
+                    yawObject.position.z -= forwardVector.z * actualMoveDistance;
+                }
+                if (move.left) {
+                    yawObject.position.x += strafeVector.x * actualMoveDistance;
+                    yawObject.position.z += strafeVector.z * actualMoveDistance;
+                }
+                if (move.right) {
+                    yawObject.position.x -= strafeVector.x * actualMoveDistance;
+                    yawObject.position.z -= strafeVector.z * actualMoveDistance;
+                }
+
+                if (yawObject.position.y < playerEyeLevelOffset) {
+                    yawObject.position.y = playerEyeLevelOffset;
+                }
+
+                // Small head bob/camera shake
+                pitchObject.position.x = (Math.random() - 0.5) * 0.05 * deltaTime * 60;
+                pitchObject.position.z = (Math.random() - 0.5) * 0.05 * deltaTime * 60;
+            }
+
+            // --- Game State Logic ---
+            switch (currentGameState) {
+                case GAME_STATE.CRYSTALS_FALLING:
+                case GAME_STATE.DAY_NIGHT_CYCLE: // Crystals continue to bounce during day/night cycles
+                    let allCrystalsLanded = true; // This will still track if the initial fall is done
+                    crystals.forEach((crystal, index) => {
+                        if (crystal.userData.isFalling || crystal.userData.isBouncing) { // Process falling or bouncing crystals
+                            crystal.userData.velocityY -= GRAVITY * crystal.userData.gravityMultiplier * deltaTime;
+                            crystal.position.y += crystal.userData.velocityY * deltaTime;
+
+                            crystal.position.x += crystal.userData.velocityXZ.x * deltaTime;
+                            crystal.position.z += crystal.userData.velocityXZ.z * deltaTime;
+                            crystal.userData.velocityXZ.multiplyScalar(DAMPING_AIR);
+
+                            crystal.rotation.y += crystal.userData.rotationSpeed * deltaTime;
+                            crystal.userData.rotationSpeed *= DAMPING_AIR;
+
+                            // Check for ground collision
+                            if (crystal.position.y <= crystal.userData.targetY) {
+                                crystal.position.y = crystal.userData.targetY; // Snap to ground
+                                if (crystal.userData.velocityY < 0) { // If moving downwards
+                                    if (Math.abs(crystal.userData.velocityY) > crystal.userData.minBounceVelocity) {
+                                        // Bounce with energy loss
+                                        crystal.userData.velocityY = -crystal.userData.velocityY * crystal.userData.restitution;
+                                        crystal.userData.isBouncing = true; // Mark as bouncing
+                                        crystal.userData.isFalling = false; // Initial fall is over
+                                        crystal.userData.onGround = true; // Briefly on ground
+                                    } else {
+                                        // Velocity too low for meaningful bounce, stop
+                                        crystal.userData.velocityY = 0;
+                                        crystal.userData.isBouncing = false;
+                                        crystal.userData.isFalling = false;
+                                        crystal.userData.onGround = true; // Permanently on ground
+                                    }
+                                }
+                            } else {
+                                crystal.userData.onGround = false; // Not on ground if above targetY
+                            }
+
+                            if (crystal.userData.isFalling || crystal.userData.isBouncing) {
+                                allCrystalsLanded = false; // If any crystal is still falling or bouncing, they haven't "settled"
+                            }
+                        }
+                    });
+
+                    // Only transition to day/night cycle *after* the initial fall of all crystals is done
+                    // But allow bouncing to continue through day/night cycles
+                    if (currentGameState === GAME_STATE.CRYSTALS_FALLING && allCrystalsLanded) {
+                        console.log("All crystals have completed initial fall. Bouncing continues during day/night cycle.");
+                        // We don't change state here to DAY_NIGHT_CYCLE, because the updateDayNightCycle handles it.
+                        // The 'allCrystalsLanded' flag here just signifies the *initial* drop is over.
+                        // The day/night cycle will naturally advance.
+                    }
+
+                    timeOfDay += deltaTime / dayCycleDuration; // Time advances in both these states
+
+                    if (timeOfDay >= 1) {
+                        timeOfDay -= 1; // Reset timeOfDay to 0 to loop
+                        dayCyclesCompleted++;
+                        console.log(`Day/Night cycle completed! Total cycles: ${dayCyclesCompleted}`);
+
+                        if (dayCyclesCompleted >= requiredDayCycles) {
+                            console.log("Required day/night cycles met! The door will appear and night will be permanent.");
+                            currentGameState = GAME_STATE.DOOR_APPEAR;
+                            timeOfDay = 0.85; // Force the time of day to be night (or very near night)
+                            redDoor.visible = true; // Make the door visible
+                            // Stop all crystals from bouncing and fix their position
+                            crystals.forEach(crystal => {
+                                crystal.userData.isBouncing = false;
+                                crystal.userData.isFalling = false; // Ensure this is also false
+                                crystal.userData.velocityY = 0;
+                                crystal.position.y = crystal.userData.targetY; // Snap to final landed position
+                                crystal.userData.velocityXZ.set(0,0,0); // Stop horizontal movement too
+                                crystal.userData.rotationSpeed = 0; // Stop rotation too
+                            });
+                            // Orient player to face the door's position
+                            const playerToDoor = new THREE.Vector3().subVectors(doorPosition, yawObject.position);
+                            const targetYawRotation = Math.atan2(playerToDoor.x, playerToDoor.z);
+                            yawObject.rotation.y = targetYawRotation;
+                        }
+                    }
+                    break;
+
+                case GAME_STATE.DOOR_APPEAR:
+                    // Keep the night permanent
+                    timeOfDay = 0.85; // Ensure it stays deep night
+
+                    // Use yawObject.position for player position
+                    const playerPos = yawObject.position;
+                    const distToDoor = playerPos.distanceTo(redDoor.position);
+
+                    // Update the door text position relative to the door in 3D space
+                    const doorCenter = new THREE.Vector3();
+                    redDoor.getWorldPosition(doorCenter); // Get the world position of the door's center
+
+                    // To make the text appear "on" the door, project the door's center onto the screen
+                    doorCenter.project(camera);
+
+                    const screenX = (doorCenter.x * 0.5 + 0.5) * window.innerWidth;
+                    const screenY = (-doorCenter.y * 0.5 + 0.5) * window.innerHeight;
+
+                    doorTextContainer.style.left = `${screenX}px`;
+                    doorTextContainer.style.top = `${screenY}px`;
+                    // Adjust scale based on distance, but don't let it become too small
+                    const scaleFactor = Math.max(0.8, 1 - (distToDoor / doorInteractionDistance) * 0.5);
+                    doorTextContainer.style.transform = `translate(-50%, -50%) scale(${scaleFactor})`;
+
+
+                    if (distToDoor < doorInteractionDistance) {
+                        doorTextContainer.innerHTML = 'Exit<br/>#UnlockMe'; // Display the text on the door
+                        // Only show text if not currently transitioning
+                        if (!isTransitioning) { 
+                            doorTextContainer.style.display = 'block';
+                        }
+                    } else {
+                        // Only hide text if not transitioning and player has moved away
+                        if (!isTransitioning) { 
+                            doorTextContainer.style.display = 'none';
+                        }
+                    }
+
+                    // --- PROXIMITY-BASED TRANSITION with delay and flag ---
+                    if (distToDoor < doorPassThroughDistance && !isTransitioning) {
+                        isTransitioning = true; // Set the flag immediately
+                        console.log("Player is close enough to the door! Initiating transition in 1 second.");
+                        doorTextContainer.style.display = 'none'; // Hide the text immediately for visual feedback
+
+                        setTimeout(() => {
+                            console.log("Redirecting to maze3.html now.");
+                            window.location.href = 'maze3.html';
+                        }, 1000); // 1000 milliseconds = 1 second delay
+                    }
+                    break;
+            }
+
+            updateDayNightCycle(deltaTime);
+            renderer.render(scene, camera);
+        }
+
+        function updateDayNightCycle(deltaTime) {
+            let sunIntensity = 0;
+            let starsOpacity = 0;
+
+            if (currentGameState === GAME_STATE.CRYSTALS_FALLING || currentGameState === GAME_STATE.DAY_NIGHT_CYCLE) {
+                const minElevation = Math.PI / 6;
+                let sunElevationAngle;
+
+                if (timeOfDay < 0.25) {
+                    const progress = timeOfDay / 0.25;
+                    sunElevationAngle = THREE.MathUtils.lerp(-Math.PI / 2, minElevation, easeInOutSine(progress));
+                } else if (timeOfDay < 0.75) {
+                    const progress = (timeOfDay - 0.25) / 0.5;
+                    sunElevationAngle = minElevation;
+                } else {
+                    const progress = (timeOfDay - 0.75) / 0.25;
+                    sunElevationAngle = THREE.MathUtils.lerp(minElevation, -Math.PI / 2, easeInOutSine(progress));
+                }
+
+                sun.position.set(
+                    Math.sin(sunElevationAngle) * 500,
+                    Math.cos(sunElevationAngle) * 500,
+                    50
+                );
+
+                if (timeOfDay < 0.1 || timeOfDay > 0.9) {
+                    sunIntensity = 0.1;
+                } else if (timeOfDay < 0.3) {
+                    sunIntensity = THREE.MathUtils.lerp(0.1, 1, (timeOfDay - 0.1) / 0.2);
+                } else if (timeOfDay < 0.7) {
+                    sunIntensity = 1;
+                } else if (timeOfDay < 0.9) {
+                    sunIntensity = THREE.MathUtils.lerp(1, 0.1, (timeOfDay - 0.7) / 0.2);
+                }
+
+                if (timeOfDay > 0.75) {
+                    starsOpacity = (timeOfDay - 0.75) / 0.25;
+                } else {
+                    starsOpacity = 0;
+                }
+
+                scene.background.set(getSkyColor(timeOfDay));
+                scene.fog.color.set(getSkyColor(timeOfDay));
+
+            } else if (currentGameState === GAME_STATE.DOOR_APPEAR) {
+                timeOfDay = 0.85; // Keep it night
+                sunIntensity = 0.05; // Keep sun very dim
+                starsOpacity = 1; // Keep stars visible
+
+                scene.background.set(skyColors.night);
+                scene.fog.color.set(skyColors.night);
+                // Keep sun in a night position (or a set position for permanent night)
+                sun.position.set(
+                    Math.sin(timeOfDay * Math.PI * 2) * 500, // This will be fixed at 0.85
+                    Math.cos(timeOfDay * Math.PI * 2) * 500,
+                    50
+                );
+                stars.material.opacity = Math.min(1, stars.material.opacity + deltaTime * 0.5); // Fade in stars if not already full opacity
+            }
+
+            sun.color.set(getSunColor(timeOfDay));
+            sun.intensity = sunIntensity;
+            stars.material.opacity = starsOpacity;
+        }
+    </script>
+</body>
+</html>
