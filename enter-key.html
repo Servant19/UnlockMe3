@@ -46,6 +46,7 @@
       padding: 10px 0;
       width: 100%;
       box-shadow: 0 0 10px #33ff33;
+      transition: color 0.3s ease;
     }
     .blink {
       animation: blink 1s steps(1, start) infinite;
@@ -143,8 +144,17 @@
           window.location.href = "maze2.html";
         } else {
           errorMsg.textContent = "ACCESS DENIED: INVALID KEY";
-          input.value = "";
-          input.focus();
+
+          // Show INVALID KEY in red in the input box
+          input.style.color = "red";
+          input.value = "INVALID KEY";
+
+          // Clear after delay and reset style
+          setTimeout(() => {
+            input.value = "";
+            input.style.color = "#33ff33";
+            input.focus();
+          }, 1000);
         }
       }
     });
